@@ -94,7 +94,7 @@ require("bento").setup({
     label_padding = 1, -- Padding around labels
     max_open_buffers = -1, -- Max buffers (-1 = unlimited)
     default_action = "open", -- Action when pressing label directly
-    show_minimal_menu = true, -- Show the dashed collapsed menu
+    show_minimal_menu = false, -- Show the dashed collapsed menu
 
     -- Highlight groups
     highlights = {
@@ -126,7 +126,7 @@ require("bento").setup({
 | `label_padding` | number | `1` | Padding on left/right of labels |
 | `max_open_buffers` | number | `-1` | Maximum number of buffers to keep open (`-1` = unlimited) |
 | `default_action` | string | `"open"` | Default action mode when menu expands |
-| `show_minimal_menu` | boolean | `true` | Whether to show the dashed collapsed menu (`true`) or to show nothing when collapsed (`false`) |
+| `show_minimal_menu` | boolean | `false` | Whether to show the dashed collapsed menu (`true`) or to show nothing when collapsed (`false`) |
 | `highlights` | table | See below | Highlight groups for all UI elements |
 | `actions` | table | Built-in actions | Action definitions (see Actions section) |
 

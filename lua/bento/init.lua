@@ -317,7 +317,7 @@ function M.setup(config)
         label_padding = 1,
         default_action = "open",
         max_open_buffers = -1,
-        show_minimal_menu = true,
+        show_minimal_menu = false,
 
         highlights = {
             current = "Bold",
