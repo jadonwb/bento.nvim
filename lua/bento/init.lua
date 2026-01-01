@@ -34,7 +34,7 @@ M.actions = {
     },
     vsplit = {
         key = "|",
-        hl = "DiagnosticVirtualTextHint",
+        hl = "DiagnosticVirtualTextInfo",
         action = function(_, buf_name)
             local bufnr = vim.fn.bufnr(buf_name)
             if bufnr ~= -1 then
@@ -47,7 +47,7 @@ M.actions = {
     },
     split = {
         key = "_",
-        hl = "DiagnosticVirtualTextHint",
+        hl = "DiagnosticVirtualTextInfo",
         action = function(_, buf_name)
             local bufnr = vim.fn.bufnr(buf_name)
             if bufnr ~= -1 then
@@ -328,8 +328,8 @@ function M.setup(config)
             previous = "Search",
             label_open = "DiagnosticVirtualTextHint",
             label_delete = "DiagnosticVirtualTextError",
-            label_vsplit = "DiagnosticVirtualTextHint",
-            label_split = "DiagnosticVirtualTextHint",
+            label_vsplit = "DiagnosticVirtualTextInfo",
+            label_split = "DiagnosticVirtualTextInfo",
             window_bg = "BentoNormal",
         },
     }

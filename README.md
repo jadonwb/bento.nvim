@@ -106,8 +106,8 @@ require("bento").setup({
         previous = "Search", -- Label for previous buffer (main_keymap label)
         label_open = "DiagnosticVirtualTextHint", -- Labels in open action mode
         label_delete = "DiagnosticVirtualTextError", -- Labels in delete action mode
-        label_vsplit = "DiagnosticVirtualTextHint", -- Labels in vertical split mode
-        label_split = "DiagnosticVirtualTextHint", -- Labels in horizontal split mode
+        label_vsplit = "DiagnosticVirtualTextInfo", -- Labels in vertical split mode
+        label_split = "DiagnosticVirtualTextInfo", -- Labels in horizontal split mode
         window_bg = "BentoNormal", -- Menu window background
     },
 
@@ -144,8 +144,8 @@ All highlights are configurable under the `highlights` table:
 | `previous` | `"Search"` | Label for previous buffer (the `main_keymap` label) |
 | `label_open` | `"DiagnosticVirtualTextHint"` | Labels in open action mode |
 | `label_delete` | `"DiagnosticVirtualTextError"` | Labels in delete action mode |
-| `label_vsplit` | `"DiagnosticVirtualTextHint"` | Labels in vertical split mode |
-| `label_split` | `"DiagnosticVirtualTextHint"` | Labels in horizontal split mode |
+| `label_vsplit` | `"DiagnosticVirtualTextInfo"` | Labels in vertical split mode |
+| `label_split` | `"DiagnosticVirtualTextInfo"` | Labels in horizontal split mode |
 | `window_bg` | `"BentoNormal"` | Menu window background (transparent by default) |
 
 
