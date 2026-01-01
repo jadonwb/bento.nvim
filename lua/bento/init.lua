@@ -13,7 +13,7 @@ end
 M.actions = {
     open = {
         key = "<C-o>",
-        hl = "Search", -- will be overridden by hl_open config
+        hl = "Search",
         action = function(_, buf_name)
             local bufnr = vim.fn.bufnr(buf_name)
             if bufnr ~= -1 then
@@ -26,7 +26,7 @@ M.actions = {
     },
     delete = {
         key = "<C-d>",
-        hl = "ErrorMsg", -- will be overridden by hl_delete config
+        hl = "ErrorMsg",
         action = function(buf_id, _)
             vim.api.nvim_buf_delete(buf_id, { force = false })
             require("bento.ui").refresh_menu()
@@ -285,9 +285,6 @@ function M.setup(config)
     config = config or {}
 
     local default_config = {
-        hl_filename = "Bold",
-        hl_open = "Search",
-        hl_delete = "ErrorMsg",
         main_keymap = ";",
         offset_y = 0,
         dash_char = "─",
@@ -295,12 +292,24 @@ function M.setup(config)
         default_action = "open",
         max_open_buffers = -1,
         show_minimal_menu = true,
+
+        highlights = {
+            current = "Bold",
+            active = "Normal",
+            inactive = "Comment",
+            modified = "DiagnosticWarn",
+            inactive_dash = "Comment",
+            previous = "Search",
+            label_open = "DiagnosticVirtualTextHint",
+            label_delete = "DiagnosticVirtualTextError",
+            window_bg = "BentoNormal",
+        },
     }
 
     BentoConfig = utils.merge_tables(default_config, config)
 
-    M.actions.open.hl = BentoConfig.hl_open
-    M.actions.delete.hl = BentoConfig.hl_delete
+    M.actions.open.hl = BentoConfig.highlights.label_open
+    M.actions.delete.hl = BentoConfig.highlights.label_delete
 
     BentoConfig.actions = M.actions
 

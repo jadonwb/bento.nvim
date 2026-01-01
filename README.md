@@ -93,10 +93,17 @@ require("bento").setup({
     show_minimal_menu = true, -- Show the dashed collapsed menu
 
     -- Highlight groups
-    hl_filename = "Bold", -- Current buffer filename
-    hl_inactive = "Comment", -- Inactive buffer dashes
-    hl_open = "Search", -- Open action labels
-    hl_delete = "ErrorMsg", -- Delete action labels
+    highlights = {
+        current = "Bold", -- Current buffer filename (in last editor window)
+        active = "Normal", -- Active buffers visible in other windows
+        inactive = "Comment", -- Inactive/hidden buffer filenames
+        modified = "DiagnosticWarn", -- Modified/unsaved buffer filenames and dashes
+        inactive_dash = "Comment", -- Inactive buffer dashes in collapsed state
+        previous = "Search", -- Label for previous buffer (main_keymap label)
+        label_open = "DiagnosticVirtualTextHint", -- Labels in open action mode
+        label_delete = "DiagnosticVirtualTextError", -- Labels in delete action mode
+        window_bg = "BentoNormal", -- Menu window background
+    },
 
     -- Custom actions
     actions = {},
@@ -112,13 +119,26 @@ require("bento").setup({
 | `dash_char` | string | `"─"` | Character for collapsed state lines |
 | `label_padding` | number | `1` | Padding on left/right of labels |
 | `max_open_buffers` | number | `-1` | Maximum number of buffers to keep open (`-1` = unlimited) |
-| `hl_filename` | string | `"Bold"` | Highlight group for filenames |
-| `hl_inactive` | string | `"Comment"` | Highlight group for inactive buffer dashes |
-| `hl_open` | string | `"Search"` | Highlight group for open mode labels |
-| `hl_delete` | string | `"ErrorMsg"` | Highlight group for delete mode labels |
-| `actions` | table | Built-in actions | Action definitions (see Actions section) |
 | `default_action` | string | `"open"` | Default action mode when menu expands |
 | `show_minimal_menu` | boolean | `true` | Whether to show the dashed collapsed menu (`true`) or to show nothing when collapsed (`false`) |
+| `highlights` | table | See below | Highlight groups for all UI elements |
+| `actions` | table | Built-in actions | Action definitions (see Actions section) |
+
+### Highlights
+
+All highlights are configurable under the `highlights` table:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `current` | `"Bold"` | Current buffer filename (in last editor window) |
+| `active` | `"Normal"` | Active buffers visible in other windows |
+| `inactive` | `"Comment"` | Inactive/hidden buffer filenames |
+| `modified` | `"DiagnosticWarn"` | Modified/unsaved buffer filenames and dashes |
+| `inactive_dash` | `"Comment"` | Inactive buffer dashes in collapsed state |
+| `previous` | `"Search"` | Label for previous buffer (the `main_keymap` label) |
+| `label_open` | `"DiagnosticVirtualTextHint"` | Labels in open action mode |
+| `label_delete` | `"DiagnosticVirtualTextError"` | Labels in delete action mode |
+| `window_bg` | `"BentoNormal"` | Menu window background (transparent by default) |
 
 
 ## Lua API
@@ -145,8 +165,16 @@ require("bento.ui").select_buffer(index)
 
 ```lua
 require("bento").setup({
-    hl_open = "IncSearch",
-    hl_delete = "DiagnosticError",
+    highlights = {
+        current = "Title",
+        active = "Normal",
+        inactive = "NonText",
+        modified = "WarningMsg",
+        inactive_dash = "NonText",
+        previous = "WarningMsg",
+        label_open = "IncSearch",
+        label_delete = "DiagnosticError",
+    },
 })
 ```
 

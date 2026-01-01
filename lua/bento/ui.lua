@@ -5,9 +5,8 @@ local line_keys = require("bento").line_keys
 
 local M = {}
 
-bento_win_id = nil
-bento_win_id = nil
-bento_bufh = nil
+local bento_win_id = nil
+local bento_bufh = nil
 local last_editor_win = nil
 local config = bento.get_config()
 local is_expanded = false
@@ -276,7 +275,11 @@ local function create_window(height, width)
     vim.api.nvim_buf_set_option(bufnr, "swapfile", false)
     vim.api.nvim_win_set_option(win_id, "wrap", false)
     vim.api.nvim_win_set_option(win_id, "winblend", 0)
-    vim.api.nvim_win_set_option(win_id, "winhighlight", "Normal:BentoNormal")
+    vim.api.nvim_win_set_option(
+        win_id,
+        "winhighlight",
+        "Normal:" .. config.highlights.window_bg
+    )
 
     return { bufnr = bufnr, win_id = win_id }
 end
@@ -434,6 +437,7 @@ local function render_collapsed()
         return
     end
 
+    config = bento.get_config()
     update_marks()
     local contents = {}
     local padding = config.label_padding or 1
@@ -457,11 +461,21 @@ local function render_collapsed()
     vim.api.nvim_buf_clear_namespace(bento_bufh, ns_id, 0, -1)
 
     for i, mark in ipairs(marks) do
-        if not is_buffer_active(mark.buf_id) then
+        local is_modified = vim.api.nvim_buf_get_option(mark.buf_id, "modified")
+        if is_modified then
             vim.api.nvim_buf_add_highlight(
                 bento_bufh,
                 ns_id,
-                config.hl_inactive or "Comment",
+                config.highlights.modified,
+                i - 1,
+                0,
+                -1
+            )
+        elseif not is_buffer_active(mark.buf_id) then
+            vim.api.nvim_buf_add_highlight(
+                bento_bufh,
+                ns_id,
+                config.highlights.inactive_dash,
                 i - 1,
                 0,
                 -1
@@ -478,6 +492,7 @@ local function render_expanded()
         return
     end
 
+    config = bento.get_config()
     update_marks()
     local smart_labels = assign_smart_labels(marks, line_keys)
     local contents = {}
@@ -532,6 +547,7 @@ local function render_expanded()
         local label = smart_labels[i]
         local is_current = is_current_buffer(mark.buf_id)
         local is_active = is_buffer_active(mark.buf_id)
+        local is_modified = vim.api.nvim_buf_get_option(mark.buf_id, "modified")
         local data = line_data[i]
 
         if label and label ~= " " then
@@ -541,34 +557,55 @@ local function render_expanded()
             local label_start = filename_end + 1 + padding
             local label_end = label_start + #label + padding
 
-            local action_name = current_action
-                or config.default_action
-                or "open"
-            local label_hl = "Search"
+            local label_hl
+            local is_previous_buffer = config.main_keymap
+                and label == config.main_keymap
+            if is_previous_buffer then
+                label_hl = config.highlights.previous
+            else
+                local action_name = current_action
+                    or config.default_action
+                    or "open"
+                label_hl = config.highlights.label_open
 
-            if
-                config.actions[action_name] and config.actions[action_name].hl
-            then
-                label_hl = config.actions[action_name].hl
+                if
+                    config.actions[action_name]
+                    and config.actions[action_name].hl
+                then
+                    label_hl = config.actions[action_name].hl
+                end
             end
 
             local filename_hl
-            if is_current then
-                filename_hl = config.hl_filename or "Bold"
+            if is_modified then
+                filename_hl = config.highlights.modified
+            elseif is_current then
+                filename_hl = config.highlights.current
             elseif is_active then
-                filename_hl = "Normal"
+                filename_hl = config.highlights.active
             else
-                filename_hl = "Comment"
+                filename_hl = config.highlights.inactive
             end
 
-            vim.api.nvim_buf_add_highlight(
-                bento_bufh,
-                ns_id,
-                filename_hl,
-                i - 1,
-                filename_start,
-                filename_end
-            )
+            if is_modified then
+                vim.api.nvim_buf_add_highlight(
+                    bento_bufh,
+                    ns_id,
+                    filename_hl,
+                    i - 1,
+                    0,
+                    filename_end + 1
+                )
+            else
+                vim.api.nvim_buf_add_highlight(
+                    bento_bufh,
+                    ns_id,
+                    filename_hl,
+                    i - 1,
+                    filename_start,
+                    filename_end
+                )
+            end
 
             vim.api.nvim_buf_add_highlight(
                 bento_bufh,
