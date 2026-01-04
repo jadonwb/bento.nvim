@@ -319,7 +319,7 @@ function M.setup(config)
         label_padding = 1,
         default_action = "open",
         max_open_buffers = -1,
-        show_minimal_menu = false,
+        minimal_menu = nil, -- nil | "dashed" | "filename" | "full"
 
         highlights = {
             current = "Bold",
@@ -332,6 +332,7 @@ function M.setup(config)
             label_delete = "DiagnosticVirtualTextError",
             label_vsplit = "DiagnosticVirtualTextInfo",
             label_split = "DiagnosticVirtualTextInfo",
+            label_minimal = "Visual",
             window_bg = "BentoNormal",
         },
     }
@@ -367,7 +368,7 @@ function M.setup(config)
 
     vim.defer_fn(function()
         require("bento.ui").setup_state()
-        if BentoConfig.show_minimal_menu then
+        if BentoConfig.minimal_menu then
             require("bento.ui").toggle_menu()
         end
     end, 100)

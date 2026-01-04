@@ -13,11 +13,11 @@ local is_expanded = false
 local selection_mode_keymaps = {} -- Keys we've overridden
 local saved_keymaps = {} -- Original keymaps to restore
 local current_action = nil -- Track which action mode is active
-local show_minimal_menu_active = nil -- Current state of minimal menu
+local minimal_menu_active = nil -- Current state of minimal menu (nil | "dashed" | "filename" | "full")
 
 function M.setup_state()
-    if show_minimal_menu_active == nil then
-        show_minimal_menu_active = config.show_minimal_menu
+    if minimal_menu_active == nil then
+        minimal_menu_active = config.minimal_menu
     end
 end
 
@@ -457,8 +457,8 @@ local function set_selection_keybindings(smart_labels)
     table.insert(selection_mode_keymaps, "<ESC>")
 end
 
--- Display menu in collapsed state (dashes only)
-local function render_collapsed()
+-- Display menu in dashed collapsed state
+local function render_dashed()
     if not bento_bufh or not vim.api.nvim_buf_is_valid(bento_bufh) then
         return
     end
@@ -512,8 +512,106 @@ local function render_collapsed()
     clear_selection_keymaps()
 end
 
+-- Display menu in filename-only collapsed state
+local function render_filename_collapsed()
+    if not bento_bufh or not vim.api.nvim_buf_is_valid(bento_bufh) then
+        return
+    end
+
+    config = bento.get_config()
+    update_marks()
+    local contents = {}
+    local padding = config.label_padding or 1
+    local padding_str = string.rep(" ", padding)
+
+    local all_paths = {}
+    for _, mark in ipairs(marks) do
+        table.insert(all_paths, mark.filename)
+    end
+    local display_names = utils.get_display_names(all_paths)
+
+    local max_content_width = 0
+    local line_data = {}
+
+    for i, mark in ipairs(marks) do
+        local display_name = display_names[mark.filename]
+            or utils.get_file_name(mark.filename)
+        local content_width = vim.fn.strwidth(display_name)
+        max_content_width = math.max(max_content_width, content_width)
+        table.insert(line_data, {
+            display_name = display_name,
+            content_width = content_width,
+        })
+    end
+
+    local total_width = padding + max_content_width + padding
+
+    for i, data in ipairs(line_data) do
+        local left_space = max_content_width - data.content_width
+        local line = padding_str
+            .. string.rep(" ", left_space)
+            .. data.display_name
+            .. padding_str
+        contents[i] = line
+    end
+
+    vim.api.nvim_buf_set_option(bento_bufh, "modifiable", true)
+    vim.api.nvim_buf_set_lines(bento_bufh, 0, -1, false, contents)
+    vim.api.nvim_buf_set_option(bento_bufh, "modifiable", false)
+
+    update_window_size(total_width, #marks)
+
+    local ns_id = vim.api.nvim_create_namespace("BentoFilename")
+    vim.api.nvim_buf_clear_namespace(bento_bufh, ns_id, 0, -1)
+
+    for i, mark in ipairs(marks) do
+        local is_current = is_current_buffer(mark.buf_id)
+        local is_active = is_buffer_active(mark.buf_id)
+        local is_modified = vim.api.nvim_buf_get_option(mark.buf_id, "modified")
+        local data = line_data[i]
+
+        local left_space = max_content_width - data.content_width
+        local display_name_start = padding + left_space
+        local display_name_end = display_name_start
+            + vim.fn.strwidth(data.display_name)
+
+        local filename_hl
+        if is_modified then
+            filename_hl = config.highlights.modified
+        elseif is_current then
+            filename_hl = config.highlights.current
+        elseif is_active then
+            filename_hl = config.highlights.active
+        else
+            filename_hl = config.highlights.inactive
+        end
+
+        if is_modified then
+            vim.api.nvim_buf_add_highlight(
+                bento_bufh,
+                ns_id,
+                filename_hl,
+                i - 1,
+                0,
+                -1
+            )
+        else
+            vim.api.nvim_buf_add_highlight(
+                bento_bufh,
+                ns_id,
+                filename_hl,
+                i - 1,
+                display_name_start,
+                display_name_end
+            )
+        end
+    end
+
+    clear_selection_keymaps()
+end
+
 -- Display menu in expanded state (labels + names)
-local function render_expanded()
+local function render_expanded(is_minimal_full)
     if not bento_bufh or not vim.api.nvim_buf_is_valid(bento_bufh) then
         return
     end
@@ -594,7 +692,9 @@ local function render_expanded()
             local label_hl
             local is_previous_buffer = config.main_keymap
                 and label == config.main_keymap
-            if is_previous_buffer then
+            if is_minimal_full then
+                label_hl = config.highlights.label_minimal
+            elseif is_previous_buffer then
                 label_hl = config.highlights.previous
             else
                 local action_name = current_action
@@ -655,6 +755,17 @@ local function render_expanded()
     set_selection_keybindings(smart_labels)
 end
 
+-- Render the appropriate collapsed view based on `minimal_menu` mode
+local function render_collapsed()
+    if minimal_menu_active == "dashed" then
+        render_dashed()
+    elseif minimal_menu_active == "filename" then
+        render_filename_collapsed()
+    elseif minimal_menu_active == "full" then
+        render_expanded(true)
+    end
+end
+
 -- Close the menu completely
 function M.close_menu()
     if bento_win_id and vim.api.nvim_win_is_valid(bento_win_id) then
@@ -702,7 +813,7 @@ function M.toggle_menu(force_create)
         return
     end
 
-    if not show_minimal_menu_active and not force_create then
+    if not minimal_menu_active and not force_create then
         return
     end
 
@@ -713,7 +824,7 @@ function M.toggle_menu(force_create)
     bento_bufh = win_info.bufnr
 
     is_expanded = false
-    if show_minimal_menu_active then
+    if minimal_menu_active then
         render_collapsed()
     end
 end
@@ -729,14 +840,14 @@ function M.expand_menu()
     render_expanded()
 end
 
--- Collapse menu back to dashes
+-- Collapse menu back to minimal view
 function M.collapse_menu()
     M.setup_state()
     if not bento_win_id or not vim.api.nvim_win_is_valid(bento_win_id) then
         return
     end
 
-    if not show_minimal_menu_active then
+    if not minimal_menu_active then
         M.close_menu()
         return
     end
@@ -824,7 +935,7 @@ function M.handle_main_keymap()
         else
             M.expand_menu()
         end
-    elseif not show_minimal_menu_active then
+    elseif not minimal_menu_active then
         M.toggle_menu(true)
         M.expand_menu()
     else
@@ -849,29 +960,45 @@ function M.refresh_menu()
     if is_expanded then
         render_expanded()
     else
-        if show_minimal_menu_active then
+        if minimal_menu_active then
             render_collapsed()
         end
     end
 end
 
--- Toggle the minimal menu preference dynamically
+-- Toggle the minimal menu mode dynamically
+-- Cycles through: nil -> "dashed" -> "filename" -> "full"
 function M.toggle_minimal_menu()
     M.setup_state()
-    show_minimal_menu_active = not show_minimal_menu_active
 
-    if show_minimal_menu_active then
-        vim.notify(
-            "Minimal menu enabled",
-            vim.log.levels.INFO,
-            { title = "Buffer Manager" }
-        )
+    local modes = { nil, "dashed", "filename", "full" }
+    local current_idx = 1
+    for i, mode in ipairs(modes) do
+        if minimal_menu_active == mode then
+            current_idx = i
+            break
+        end
+    end
+
+    local next_idx = (current_idx % #modes) + 1
+    minimal_menu_active = modes[next_idx]
+
+    local mode_name = minimal_menu_active or "disabled"
+    vim.notify(
+        "Minimal menu: " .. mode_name,
+        vim.log.levels.INFO,
+        { title = "Buffer Manager" }
+    )
+
+    if minimal_menu_active then
+        if not bento_win_id or not vim.api.nvim_win_is_valid(bento_win_id) then
+            M.toggle_menu()
+        else
+            if not is_expanded then
+                render_collapsed()
+            end
+        end
     else
-        vim.notify(
-            "Minimal menu disabled",
-            vim.log.levels.INFO,
-            { title = "Buffer Manager" }
-        )
         if
             bento_win_id
             and vim.api.nvim_win_is_valid(bento_win_id)
