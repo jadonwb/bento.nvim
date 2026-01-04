@@ -15,9 +15,24 @@ local saved_keymaps = {} -- Original keymaps to restore
 local current_action = nil -- Track which action mode is active
 local minimal_menu_active = nil -- Current state of minimal menu (nil | "dashed" | "filename" | "full")
 
+-- Tabline state
+local tabline_active = false -- Whether tabline UI is active
+local saved_tabline = nil -- Original tabline setting
+local saved_showtabline = nil -- Original showtabline setting
+local smart_labels_cache = {} -- Cache for smart labels used by tabline
+local tabline_start_idx = 1 -- First buffer index to display in tabline (1-indexed)
+local tabline_end_idx = 1 -- Last buffer index displayed in tabline (1-indexed)
+
+-- Pagination state
+local current_page = 1 -- Current page (1-indexed)
+
 function M.setup_state()
+    config = bento.get_config()
+    if config.ui.mode == "tabline" then
+        return
+    end
     if minimal_menu_active == nil then
-        minimal_menu_active = config.minimal_menu
+        minimal_menu_active = config.ui.floating.minimal_menu
     end
 end
 
@@ -26,6 +41,12 @@ function M.set_last_editor_win(win_id)
 end
 
 vim.api.nvim_set_hl(0, "BentoNormal", { bg = "NONE", fg = "NONE" })
+
+-- Check if using tabline UI
+local function is_tabline_ui()
+    config = bento.get_config()
+    return config.ui.mode == "tabline"
+end
 
 -- Check if buffer is visible in current tab
 local function is_buffer_visible_in_tab(buf_id)
@@ -118,6 +139,80 @@ local function update_marks()
             end
         end
     end
+end
+
+-- Get pagination info for floating UI
+-- Returns: max_per_page, total_pages, needs_pagination
+local function get_pagination_info()
+    local max_rendered = config.ui.floating.max_rendered_buffers
+
+    local ui = vim.api.nvim_list_uis()[1]
+    local screen_height = ui and ui.height or 24
+    local available_height = screen_height - 3
+
+    local effective_max
+    if max_rendered and max_rendered > 0 then
+        effective_max = math.min(max_rendered, available_height)
+    else
+        effective_max = available_height
+    end
+
+    if effective_max < 1 then
+        effective_max = 1
+    end
+
+    if #marks <= effective_max then
+        return #marks, 1, false
+    end
+
+    local total_pages = math.ceil(#marks / effective_max)
+    return effective_max, total_pages, true
+end
+
+-- Get the slice of marks for the current page
+-- Returns: visible_marks, start_index (1-indexed)
+local function get_page_marks()
+    local max_per_page, total_pages, needs_pagination = get_pagination_info()
+    if not needs_pagination then
+        return marks, 1
+    end
+    if current_page < 1 then
+        current_page = 1
+    elseif current_page > total_pages then
+        current_page = total_pages
+    end
+    local start_idx = (current_page - 1) * max_per_page + 1
+    local end_idx = math.min(start_idx + max_per_page - 1, #marks)
+    local visible_marks = {}
+    for i = start_idx, end_idx do
+        table.insert(visible_marks, marks[i])
+    end
+    return visible_marks, start_idx
+end
+
+-- Generate pagination indicator string (e.g., "●○○" for page 1 of 3)
+local function generate_pagination_indicator(width)
+    local _, total_pages, needs_pagination = get_pagination_info()
+    if not needs_pagination then
+        return nil
+    end
+    local dots = {}
+    for i = 1, total_pages do
+        if i == current_page then
+            table.insert(dots, "●")
+        else
+            table.insert(dots, "○")
+        end
+    end
+    local indicator = table.concat(dots, " ")
+    local indicator_width = vim.fn.strwidth(indicator)
+    local padding = math.floor((width - indicator_width) / 2)
+    if padding < 0 then
+        padding = 0
+    end
+    return string.rep(" ", padding)
+        .. indicator
+        .. string.rep(" ", width - padding - indicator_width)
 end
 
 -- Assign smart labels to buffers
@@ -251,14 +346,15 @@ local function assign_smart_labels(buffers, available_keys)
     return label_assignment
 end
 
--- Calculate window position based on config.position
+-- Calculate window position based on config.ui.floating.position
 -- Supports: "top-left", "top-right", "middle-left", "middle-right",
 -- "bottom-left", "bottom-right"
 local function calculate_position(height, width)
     local ui = vim.api.nvim_list_uis()[1]
-    local position = config.position or "middle-right"
-    local offset_x = config.offset_x or 0
-    local offset_y = config.offset_y or 0
+    local floating = config.ui.floating
+    local position = floating.position or "middle-right"
+    local offset_x = floating.offset_x or 0
+    local offset_y = floating.offset_y or 0
 
     local row, col
 
@@ -351,8 +447,9 @@ end
 
 -- Generate dash line for a buffer
 local function generate_dash_line(buf_id)
-    return is_current_buffer(buf_id) and (config.dash_char:rep(2))
-        or (" " .. config.dash_char)
+    local dash_char = config.ui.floating.dash_char
+    return is_current_buffer(buf_id) and (dash_char:rep(2))
+        or (" " .. dash_char)
 end
 
 -- Save original keymap before overriding
@@ -451,6 +548,23 @@ local function set_selection_keybindings(smart_labels)
         end
     end
 
+    -- Pagination keymaps (floating UI with pagination OR tabline UI when expanded)
+    local _, _, needs_floating_pagination = get_pagination_info()
+    local needs_tabline_pagination = is_tabline_ui() and #marks > 0
+    if needs_floating_pagination or needs_tabline_pagination then
+        save_keymap("n", "[")
+        vim.keymap.set("n", "[", function()
+            require("bento.ui").prev_page()
+        end, { silent = true, desc = "Bento: Previous page" })
+        table.insert(selection_mode_keymaps, "[")
+
+        save_keymap("n", "]")
+        vim.keymap.set("n", "]", function()
+            require("bento.ui").next_page()
+        end, { silent = true, desc = "Bento: Next page" })
+        table.insert(selection_mode_keymaps, "]")
+    end
+
     vim.keymap.set("n", "<ESC>", function()
         require("bento.ui").collapse_menu()
     end, { silent = true, desc = "Bento: Collapse menu" })
@@ -465,28 +579,42 @@ local function render_dashed()
 
     config = bento.get_config()
     update_marks()
+    local visible_marks, _ = get_page_marks()
+    local _, _, needs_pagination = get_pagination_info()
     local contents = {}
-    local padding = config.label_padding or 1
+    local padding = config.ui.floating.label_padding or 1
     local padding_str = string.rep(" ", padding)
 
-    for i = 1, #marks do
+    for i = 1, #visible_marks do
         contents[i] = padding_str
-            .. generate_dash_line(marks[i].buf_id)
+            .. generate_dash_line(visible_marks[i].buf_id)
             .. padding_str
+    end
+
+    local dash_width = vim.fn.strwidth(
+        generate_dash_line(visible_marks[1] and visible_marks[1].buf_id or 0)
+    )
+    local total_width = dash_width + 2 * padding
+    local total_height = #visible_marks
+
+    if needs_pagination then
+        local indicator = generate_pagination_indicator(total_width)
+        if indicator then
+            table.insert(contents, indicator)
+            total_height = total_height + 1
+        end
     end
 
     vim.api.nvim_buf_set_option(bento_bufh, "modifiable", true)
     vim.api.nvim_buf_set_lines(bento_bufh, 0, -1, false, contents)
     vim.api.nvim_buf_set_option(bento_bufh, "modifiable", false)
 
-    local dash_width =
-        vim.fn.strwidth(generate_dash_line(marks[1] and marks[1].buf_id or 0))
-    update_window_size(dash_width + 2 * padding, #marks)
+    update_window_size(total_width, total_height)
 
     local ns_id = vim.api.nvim_create_namespace("BentoDash")
     vim.api.nvim_buf_clear_namespace(bento_bufh, ns_id, 0, -1)
 
-    for i, mark in ipairs(marks) do
+    for i, mark in ipairs(visible_marks) do
         local is_modified = vim.api.nvim_buf_get_option(mark.buf_id, "modified")
         if is_modified then
             vim.api.nvim_buf_add_highlight(
@@ -509,6 +637,17 @@ local function render_dashed()
         end
     end
 
+    if needs_pagination then
+        vim.api.nvim_buf_add_highlight(
+            bento_bufh,
+            ns_id,
+            config.highlights.page_indicator,
+            #visible_marks,
+            0,
+            -1
+        )
+    end
+
     clear_selection_keymaps()
 end
 
@@ -520,8 +659,10 @@ local function render_filename_collapsed()
 
     config = bento.get_config()
     update_marks()
+    local visible_marks, start_idx = get_page_marks()
+    local _, _, needs_pagination = get_pagination_info()
     local contents = {}
-    local padding = config.label_padding or 1
+    local padding = config.ui.floating.label_padding or 1
     local padding_str = string.rep(" ", padding)
     local lock_char = config.lock_char or "🔒"
 
@@ -532,16 +673,15 @@ local function render_filename_collapsed()
     local display_names = utils.get_display_names(all_paths)
 
     local max_content_width = 0
-    local line_data = {}
-
-    for i, mark in ipairs(marks) do
+    local all_line_data = {}
+    for _, mark in ipairs(marks) do
         local display_name = display_names[mark.filename]
             or utils.get_file_name(mark.filename)
         local is_locked = bento.is_locked(mark.buf_id)
         local lock_prefix = is_locked and (lock_char .. " ") or ""
         local content_width = vim.fn.strwidth(lock_prefix .. display_name)
         max_content_width = math.max(max_content_width, content_width)
-        table.insert(line_data, {
+        table.insert(all_line_data, {
             display_name = display_name,
             lock_prefix = lock_prefix,
             is_locked = is_locked,
@@ -549,7 +689,13 @@ local function render_filename_collapsed()
         })
     end
 
+    local line_data = {}
+    for i = start_idx, start_idx + #visible_marks - 1 do
+        table.insert(line_data, all_line_data[i])
+    end
+
     local total_width = padding + max_content_width + padding
+    local total_height = #visible_marks
 
     for i, data in ipairs(line_data) do
         local left_space = max_content_width - data.content_width
@@ -561,16 +707,24 @@ local function render_filename_collapsed()
         contents[i] = line
     end
 
+    if needs_pagination then
+        local indicator = generate_pagination_indicator(total_width)
+        if indicator then
+            table.insert(contents, indicator)
+            total_height = total_height + 1
+        end
+    end
+
     vim.api.nvim_buf_set_option(bento_bufh, "modifiable", true)
     vim.api.nvim_buf_set_lines(bento_bufh, 0, -1, false, contents)
     vim.api.nvim_buf_set_option(bento_bufh, "modifiable", false)
 
-    update_window_size(total_width, #marks)
+    update_window_size(total_width, total_height)
 
     local ns_id = vim.api.nvim_create_namespace("BentoFilename")
     vim.api.nvim_buf_clear_namespace(bento_bufh, ns_id, 0, -1)
 
-    for i, mark in ipairs(marks) do
+    for i, mark in ipairs(visible_marks) do
         local is_current = is_current_buffer(mark.buf_id)
         local is_active = is_buffer_active(mark.buf_id)
         local is_modified = vim.api.nvim_buf_get_option(mark.buf_id, "modified")
@@ -614,6 +768,17 @@ local function render_filename_collapsed()
         end
     end
 
+    if needs_pagination then
+        vim.api.nvim_buf_add_highlight(
+            bento_bufh,
+            ns_id,
+            config.highlights.page_indicator,
+            #visible_marks,
+            0,
+            -1
+        )
+    end
+
     clear_selection_keymaps()
 end
 
@@ -626,8 +791,10 @@ local function render_expanded(is_minimal_full)
     config = bento.get_config()
     update_marks()
     local smart_labels = assign_smart_labels(marks, line_keys)
+    local visible_marks, start_idx = get_page_marks()
+    local _, _, needs_pagination = get_pagination_info()
     local contents = {}
-    local padding = config.label_padding or 1
+    local padding = config.ui.floating.label_padding or 1
     local padding_str = string.rep(" ", padding)
     local lock_char = config.lock_char or "🔒"
 
@@ -638,8 +805,7 @@ local function render_expanded(is_minimal_full)
     local display_names = utils.get_display_names(all_paths)
 
     local max_content_width = 0
-    local line_data = {}
-
+    local all_line_data = {}
     for i, mark in ipairs(marks) do
         local label = smart_labels[i] or " "
         local display_name = display_names[mark.filename]
@@ -654,16 +820,23 @@ local function render_expanded(is_minimal_full)
             + #label
             + padding
         max_content_width = math.max(max_content_width, content_width)
-        table.insert(line_data, {
+        table.insert(all_line_data, {
             label = label,
             display_name = display_name,
             lock_prefix = lock_prefix,
             is_locked = is_locked,
             content_width = content_width,
+            global_idx = i,
         })
     end
 
+    local line_data = {}
+    for i = start_idx, start_idx + #visible_marks - 1 do
+        table.insert(line_data, all_line_data[i])
+    end
+
     local total_width = padding + max_content_width
+    local total_height = #visible_marks
 
     for i, data in ipairs(line_data) do
         local left_space = max_content_width - data.content_width
@@ -679,21 +852,29 @@ local function render_expanded(is_minimal_full)
         contents[i] = line
     end
 
+    if needs_pagination then
+        local indicator = generate_pagination_indicator(total_width)
+        if indicator then
+            table.insert(contents, indicator)
+            total_height = total_height + 1
+        end
+    end
+
     vim.api.nvim_buf_set_option(bento_bufh, "modifiable", true)
     vim.api.nvim_buf_set_lines(bento_bufh, 0, -1, false, contents)
     vim.api.nvim_buf_set_option(bento_bufh, "modifiable", false)
 
-    update_window_size(total_width, #marks)
+    update_window_size(total_width, total_height)
 
     local ns_id = vim.api.nvim_create_namespace("BentoLabel")
     vim.api.nvim_buf_clear_namespace(bento_bufh, ns_id, 0, -1)
 
-    for i, mark in ipairs(marks) do
-        local label = smart_labels[i]
+    for i, mark in ipairs(visible_marks) do
+        local data = line_data[i]
+        local label = data.label
         local is_current = is_current_buffer(mark.buf_id)
         local is_active = is_buffer_active(mark.buf_id)
         local is_modified = vim.api.nvim_buf_get_option(mark.buf_id, "modified")
-        local data = line_data[i]
 
         if label and label ~= " " then
             local left_space = max_content_width - data.content_width
@@ -767,10 +948,395 @@ local function render_expanded(is_minimal_full)
         end
     end
 
+    if needs_pagination then
+        vim.api.nvim_buf_add_highlight(
+            bento_bufh,
+            ns_id,
+            config.highlights.page_indicator,
+            #visible_marks,
+            0,
+            -1
+        )
+    end
+
     if is_minimal_full then
         clear_selection_keymaps()
     else
         set_selection_keybindings(smart_labels)
+    end
+end
+
+-- Calculate segment widths for all marks (used for tabline pagination)
+-- Returns: array of widths for each mark
+local function get_tabline_segment_widths()
+    config = bento.get_config()
+    local smart_labels = assign_smart_labels(marks, line_keys)
+    local lock_char = config.lock_char or "🔒"
+
+    local all_paths = {}
+    for _, mark in ipairs(marks) do
+        table.insert(all_paths, mark.filename)
+    end
+    local display_names = utils.get_display_names(all_paths)
+
+    local widths = {}
+    for i, mark in ipairs(marks) do
+        local label = smart_labels[i] or " "
+        local display_name = display_names[mark.filename]
+            or utils.get_file_name(mark.filename)
+        local is_locked = bento.is_locked(mark.buf_id)
+
+        local width = 0
+        if label and label ~= " " then
+            width = width + 1 + vim.fn.strwidth(label) + 1
+        end
+        if is_locked then
+            width = width + 1 + vim.fn.strwidth(lock_char)
+        end
+        width = width + 1 + vim.fn.strwidth(display_name)
+
+        table.insert(widths, width)
+    end
+
+    return widths
+end
+
+-- Calculate the start index for the previous page in tabline
+-- Given the current start_idx, find where the previous page should start
+local function get_tabline_prev_page_start(current_start_idx)
+    if current_start_idx <= 1 then
+        return 1
+    end
+
+    config = bento.get_config()
+    local ui = vim.api.nvim_list_uis()[1]
+    local screen_width = ui and ui.width or 80
+    local separator_symbol = config.ui.tabline.separator_symbol or "|"
+    local separator_width = 1 + vim.fn.strwidth(separator_symbol) + 1 -- " symbol " between segments
+    local left_symbol = config.ui.tabline.left_page_symbol or "❮"
+    local right_symbol = config.ui.tabline.right_page_symbol or "❯"
+    local left_symbol_width = vim.fn.strwidth(left_symbol)
+    local right_symbol_width = vim.fn.strwidth(right_symbol)
+    local left_symbol_with_spacing = 1 + left_symbol_width + 2 -- 1-space margin + symbol + 2-space gap
+    local right_symbol_with_spacing = 2 + right_symbol_width + 1 -- 2-space gap + symbol + 1-space margin
+
+    local widths = get_tabline_segment_widths()
+
+    local target_end_idx = current_start_idx - 1
+
+    local available_width = screen_width - right_symbol_with_spacing -- reserve for trailing symbol + gap
+
+    local total_width = 0
+    local start_idx = target_end_idx
+
+    for i = target_end_idx, 1, -1 do
+        local seg_width = widths[i]
+        local needed_width = seg_width
+        if i < target_end_idx then
+            needed_width = needed_width + separator_width
+        end
+
+        local has_prev = i > 1
+        local test_available = available_width
+        if has_prev then
+            test_available = test_available - left_symbol_with_spacing
+        end
+
+        if total_width + needed_width <= test_available then
+            total_width = total_width + needed_width
+            start_idx = i
+        else
+            break
+        end
+    end
+
+    return start_idx
+end
+
+-- Generate the tabline string for rendering
+-- is_minimal: if true, uses minimal highlight for labels
+-- Returns: tabline_string, end_idx (last visible buffer index)
+local function generate_tabline_string(is_minimal)
+    config = bento.get_config()
+    update_marks()
+
+    if #marks == 0 then
+        return ""
+    end
+
+    local smart_labels = assign_smart_labels(marks, line_keys)
+    smart_labels_cache = smart_labels
+    local lock_char = config.lock_char or "🔒"
+    local window_bg_hl = config.highlights.window_bg
+    local page_indicator_hl = config.highlights.page_indicator
+
+    local all_paths = {}
+    for _, mark in ipairs(marks) do
+        table.insert(all_paths, mark.filename)
+    end
+    local display_names = utils.get_display_names(all_paths)
+
+    -- Creates a tabline-specific highlight group with window_bg background
+    local function get_tabline_hl(base_hl)
+        local tabline_hl_name = "BentoTabline_" .. base_hl
+        local base_hl_info =
+            vim.api.nvim_get_hl(0, { name = base_hl, link = false })
+        local fg = base_hl_info.fg
+        local bg_hl_info =
+            vim.api.nvim_get_hl(0, { name = window_bg_hl, link = false })
+        vim.api.nvim_set_hl(0, tabline_hl_name, {
+            fg = fg,
+            bg = bg_hl_info.bg,
+            bold = base_hl_info.bold,
+            italic = base_hl_info.italic,
+            underline = base_hl_info.underline,
+        })
+        return tabline_hl_name
+    end
+
+    local tabline_page_indicator_hl = get_tabline_hl(page_indicator_hl)
+
+    local separator_hl = config.highlights.separator or "Normal"
+    local tabline_separator_hl = get_tabline_hl(separator_hl)
+    local separator_symbol = config.ui.tabline.separator_symbol or "|"
+
+    -- Calculates the display width of a buffer segment
+    local function get_segment_width(label, display_name, is_locked)
+        local width = 0
+        if label and label ~= " " then
+            width = width + 1 + vim.fn.strwidth(label) + 1
+        end
+        if is_locked then
+            width = width + 1 + vim.fn.strwidth(lock_char)
+        end
+        width = width + 1 + vim.fn.strwidth(display_name)
+        return width
+    end
+
+    local all_segments = {}
+    for i, mark in ipairs(marks) do
+        local label = smart_labels[i] or " "
+        local display_name = display_names[mark.filename]
+            or utils.get_file_name(mark.filename)
+        local is_locked = bento.is_locked(mark.buf_id)
+        local is_current = is_current_buffer(mark.buf_id)
+        local is_active = is_buffer_active(mark.buf_id)
+        local is_modified = vim.api.nvim_buf_get_option(mark.buf_id, "modified")
+
+        local label_hl
+        local is_previous_buffer = config.main_keymap
+            and label == config.main_keymap
+        if is_minimal then
+            label_hl = config.highlights.label_minimal
+        elseif is_previous_buffer then
+            label_hl = config.highlights.previous
+        else
+            local action_name = current_action
+                or config.default_action
+                or "open"
+            label_hl = config.highlights.label_open
+            if
+                config.actions[action_name] and config.actions[action_name].hl
+            then
+                label_hl = config.actions[action_name].hl
+            end
+        end
+
+        local filename_hl
+        if is_modified then
+            filename_hl = config.highlights.modified
+        elseif is_current then
+            filename_hl = config.highlights.current
+        elseif is_active then
+            filename_hl = config.highlights.active
+        else
+            filename_hl = config.highlights.inactive
+        end
+
+        local tabline_filename_hl = get_tabline_hl(filename_hl)
+
+        local segment = ""
+        if label and label ~= " " then
+            segment = segment .. "%#" .. label_hl .. "#" .. " " .. label .. " "
+        end
+        if is_locked then
+            segment = segment
+                .. "%#"
+                .. tabline_filename_hl
+                .. "#"
+                .. " "
+                .. lock_char
+        end
+        segment = segment
+            .. "%#"
+            .. tabline_filename_hl
+            .. "#"
+            .. " "
+            .. display_name
+
+        table.insert(all_segments, {
+            segment = segment,
+            width = get_segment_width(label, display_name, is_locked),
+        })
+    end
+
+    local ui = vim.api.nvim_list_uis()[1]
+    local screen_width = ui and ui.width or 80
+    local separator_width = 1 + vim.fn.strwidth(separator_symbol) + 1 -- " symbol " between segments
+    local left_symbol = config.ui.tabline.left_page_symbol or "❮"
+    local right_symbol = config.ui.tabline.right_page_symbol or "❯"
+    local left_symbol_width = vim.fn.strwidth(left_symbol)
+    local right_symbol_width = vim.fn.strwidth(right_symbol)
+    local left_symbol_with_spacing = 1 + left_symbol_width + 2 -- 1-space margin + symbol + 2-space gap
+    local right_symbol_with_spacing = 2 + right_symbol_width + 1 -- 2-space gap + symbol + 1-space margin
+
+    if tabline_start_idx < 1 then
+        tabline_start_idx = 1
+    elseif tabline_start_idx > #marks then
+        tabline_start_idx = #marks
+    end
+
+    local has_prev = tabline_start_idx > 1
+    local available_width = screen_width
+    if has_prev then
+        available_width = available_width - left_symbol_with_spacing
+    end
+
+    local visible_segments = {}
+    local current_width = 0
+    local end_idx = tabline_start_idx
+
+    for i = tabline_start_idx, #all_segments do
+        local seg = all_segments[i]
+        local needed_width = seg.width
+        if #visible_segments > 0 then
+            needed_width = needed_width + separator_width
+        end
+
+        local remaining_buffers = #all_segments - i
+        local need_trailing_symbol = remaining_buffers > 0
+        local width_with_trailing = current_width + needed_width
+        if need_trailing_symbol then
+            width_with_trailing = width_with_trailing
+                + right_symbol_with_spacing
+        end
+
+        if width_with_trailing <= available_width then
+            table.insert(visible_segments, seg)
+            current_width = current_width + needed_width
+            end_idx = i
+        else
+            break
+        end
+    end
+
+    local has_next = end_idx < #all_segments
+
+    local parts = {}
+
+    if has_prev then
+        table.insert(
+            parts,
+            "%#"
+                .. window_bg_hl
+                .. "# "
+                .. "%#"
+                .. tabline_page_indicator_hl
+                .. "#"
+                .. left_symbol
+                .. "%#"
+                .. window_bg_hl
+                .. "#  "
+        )
+    end
+
+    local segment_strings = {}
+    for _, seg in ipairs(visible_segments) do
+        table.insert(segment_strings, seg.segment)
+    end
+    local separator = "%#"
+        .. window_bg_hl
+        .. "# "
+        .. "%#"
+        .. tabline_separator_hl
+        .. "#"
+        .. separator_symbol
+        .. "%#"
+        .. window_bg_hl
+        .. "# "
+    table.insert(parts, table.concat(segment_strings, separator))
+
+    if has_next then
+        table.insert(
+            parts,
+            "%#"
+                .. window_bg_hl
+                .. "#  %="
+                .. "%#"
+                .. tabline_page_indicator_hl
+                .. "#"
+                .. right_symbol
+                .. "%#"
+                .. window_bg_hl
+                .. "# "
+        )
+    else
+        table.insert(parts, "%#" .. window_bg_hl .. "#%=")
+    end
+
+    return table.concat(parts, ""), end_idx
+end
+
+-- Render tabline in expanded state (labels visible, keymaps active)
+local function render_tabline_expanded()
+    config = bento.get_config()
+    update_marks()
+
+    if #marks == 0 then
+        return
+    end
+
+    local tabline_str, end_idx = generate_tabline_string(false)
+    tabline_end_idx = end_idx
+    vim.o.tabline = tabline_str
+    vim.o.showtabline = 2
+
+    local smart_labels = smart_labels_cache
+    set_selection_keybindings(smart_labels)
+end
+
+-- Render tabline in minimal state
+local function render_tabline_minimal()
+    config = bento.get_config()
+    update_marks()
+
+    if #marks == 0 then
+        return
+    end
+
+    local tabline_str, end_idx = generate_tabline_string(true)
+    tabline_end_idx = end_idx
+    vim.o.tabline = tabline_str
+    vim.o.showtabline = 2
+
+    clear_selection_keymaps()
+end
+
+-- Save original tabline settings
+local function save_tabline_settings()
+    if saved_tabline == nil then
+        saved_tabline = vim.o.tabline
+        saved_showtabline = vim.o.showtabline
+    end
+end
+
+-- Restore original tabline settings
+local function restore_tabline_settings()
+    if saved_tabline ~= nil then
+        vim.o.tabline = saved_tabline
+        vim.o.showtabline = saved_showtabline
+        saved_tabline = nil
+        saved_showtabline = nil
     end
 end
 
@@ -787,6 +1353,17 @@ end
 
 -- Close the menu completely
 function M.close_menu()
+    if is_tabline_ui() then
+        restore_tabline_settings()
+        tabline_active = false
+        is_expanded = false
+        tabline_start_idx = 1
+        current_action = nil
+        clear_selection_keymaps()
+        return
+    end
+
+    -- Floating UI
     if bento_win_id and vim.api.nvim_win_is_valid(bento_win_id) then
         vim.api.nvim_win_close(bento_win_id, true)
     end
@@ -794,13 +1371,109 @@ function M.close_menu()
     bento_bufh = nil
     is_expanded = false
     current_action = nil
+    current_page = 1
     clear_selection_keymaps()
+end
+
+-- Go to next page
+function M.next_page()
+    if is_tabline_ui() then
+        if not tabline_active or not is_expanded then
+            return
+        end
+        if tabline_end_idx < #marks then
+            tabline_start_idx = tabline_end_idx + 1
+            render_tabline_expanded()
+        end
+        return
+    end
+
+    -- Floating UI
+    local _, total_pages, needs_pagination = get_pagination_info()
+    if not needs_pagination then
+        return
+    end
+    if current_page < total_pages then
+        current_page = current_page + 1
+        if is_expanded then
+            render_expanded()
+        else
+            render_collapsed()
+        end
+    end
+end
+
+-- Go to previous page
+function M.prev_page()
+    if is_tabline_ui() then
+        if not tabline_active or not is_expanded then
+            return
+        end
+        if tabline_start_idx > 1 then
+            tabline_start_idx = get_tabline_prev_page_start(tabline_start_idx)
+            render_tabline_expanded()
+        end
+        return
+    end
+
+    -- Floating UI
+    local _, _, needs_pagination = get_pagination_info()
+    if not needs_pagination then
+        return
+    end
+    if current_page > 1 then
+        current_page = current_page - 1
+        if is_expanded then
+            render_expanded()
+        else
+            render_collapsed()
+        end
+    end
 end
 
 -- Toggle menu (create or close)
 function M.toggle_menu(force_create)
     M.setup_state()
 
+    if is_tabline_ui() then
+        if tabline_active then
+            M.close_menu()
+            return
+        end
+
+        local cur_win = vim.api.nvim_get_current_win()
+        local cfg = vim.api.nvim_win_get_config(cur_win)
+        if cfg.relative == "" then
+            last_editor_win = cur_win
+        else
+            for _, w in ipairs(vim.api.nvim_list_wins()) do
+                local c = vim.api.nvim_win_get_config(w)
+                if c.relative == "" then
+                    last_editor_win = w
+                    break
+                end
+            end
+        end
+
+        update_marks()
+        if #marks == 0 then
+            vim.notify(
+                "No buffers to display",
+                vim.log.levels.INFO,
+                { title = "Buffer Manager" }
+            )
+            return
+        end
+
+        save_tabline_settings()
+        tabline_active = true
+        is_expanded = false
+        tabline_start_idx = 1
+        render_tabline_minimal()
+        return
+    end
+
+    -- Floating UI
     if bento_win_id and vim.api.nvim_win_is_valid(bento_win_id) then
         M.close_menu()
         return
@@ -836,13 +1509,14 @@ function M.toggle_menu(force_create)
         return
     end
 
-    local padding = config.label_padding or 1
+    local padding = config.ui.floating.label_padding or 1
     local initial_width = 2 + 2 * padding
     local win_info = create_window(total_buffers, initial_width)
     bento_win_id = win_info.win_id
     bento_bufh = win_info.bufnr
 
     is_expanded = false
+    current_page = 1
     if minimal_menu_active then
         render_collapsed()
     end
@@ -850,6 +1524,17 @@ end
 
 -- Expand menu to show labels and names
 function M.expand_menu()
+    if is_tabline_ui() then
+        if not tabline_active then
+            return
+        end
+        is_expanded = true
+        current_action = config.default_action or "open"
+        render_tabline_expanded()
+        return
+    end
+
+    -- Floating UI
     if not bento_win_id or not vim.api.nvim_win_is_valid(bento_win_id) then
         return
     end
@@ -862,6 +1547,18 @@ end
 -- Collapse menu back to minimal view
 function M.collapse_menu()
     M.setup_state()
+
+    if is_tabline_ui() then
+        if not tabline_active then
+            return
+        end
+        is_expanded = false
+        current_action = nil
+        render_tabline_minimal()
+        return
+    end
+
+    -- Floating UI
     if not bento_win_id or not vim.api.nvim_win_is_valid(bento_win_id) then
         return
     end
@@ -936,12 +1633,38 @@ function M.set_action_mode(action_name)
         { title = "Buffer Manager" }
     )
 
-    render_expanded()
+    if is_tabline_ui() then
+        render_tabline_expanded()
+    else
+        render_expanded()
+    end
 end
 
 -- Handle main keymap press
 function M.handle_main_keymap()
     M.setup_state()
+
+    if is_tabline_ui() then
+        if tabline_active then
+            if is_expanded then
+                local last_buf = get_last_accessed_buffer()
+                if last_buf then
+                    local buf_idx = get_buffer_index(last_buf)
+                    if buf_idx then
+                        M.select_buffer(buf_idx)
+                    end
+                end
+            else
+                M.expand_menu()
+            end
+        else
+            M.toggle_menu(true)
+            M.expand_menu()
+        end
+        return
+    end
+
+    -- Floating UI
     if bento_win_id and vim.api.nvim_win_is_valid(bento_win_id) then
         if is_expanded then
             local last_buf = get_last_accessed_buffer()
@@ -965,6 +1688,28 @@ end
 -- Refresh menu if open
 function M.refresh_menu()
     M.setup_state()
+
+    if is_tabline_ui() then
+        if not tabline_active then
+            return
+        end
+
+        update_marks()
+
+        if #marks == 0 then
+            M.close_menu()
+            return
+        end
+
+        if is_expanded then
+            render_tabline_expanded()
+        else
+            render_tabline_minimal()
+        end
+        return
+    end
+
+    -- Floating UI
     if not bento_win_id or not vim.api.nvim_win_is_valid(bento_win_id) then
         return
     end
@@ -987,8 +1732,18 @@ end
 
 -- Toggle the minimal menu mode dynamically
 -- Cycles through: nil -> "dashed" -> "filename" -> "full"
+-- Note: This function is ignored when ui = "tabline"
 function M.toggle_minimal_menu()
     M.setup_state()
+
+    if is_tabline_ui() then
+        vim.notify(
+            "Minimal menu toggle is not available for tabline UI",
+            vim.log.levels.INFO,
+            { title = "Buffer Manager" }
+        )
+        return
+    end
 
     local modes = { nil, "dashed", "filename", "full" }
     local current_idx = 1

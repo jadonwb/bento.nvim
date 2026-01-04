@@ -497,7 +497,7 @@ end
 -- Enforce buffer limit by deleting LRU buffer if needed
 function M.enforce_buffer_limit()
     local config = M.get_config()
-    if config.max_open_buffers <= 0 then
+    if not config.max_open_buffers or config.max_open_buffers <= 0 then
         return
     end
 
@@ -520,21 +520,61 @@ function M.enforce_buffer_limit()
     end
 end
 
+-- Validate config structure, returns error message or nil if valid
+local function validate_config(config)
+    if config.ui ~= nil and type(config.ui) ~= "table" then
+        return '`ui` must be a table, e.g. `ui = { mode = "floating" }`'
+    end
+    if config.ui then
+        if
+            config.ui.floating ~= nil
+            and type(config.ui.floating) ~= "table"
+        then
+            return "`ui.floating` must be a table"
+        end
+        if config.ui.tabline ~= nil and type(config.ui.tabline) ~= "table" then
+            return "`ui.tabline` must be a table"
+        end
+    end
+    return nil
+end
+
 function M.setup(config)
     config = config or {}
 
+    local config_err = validate_config(config)
+    if config_err then
+        vim.notify(
+            "bento.nvim: Invalid config - " .. config_err,
+            vim.log.levels.ERROR
+        )
+        return
+    end
+
     local default_config = {
         main_keymap = ";",
-        position = "middle-right",
-        offset_x = 0,
-        offset_y = 0,
-        dash_char = "─",
         lock_char = "🔒",
-        label_padding = 1,
         default_action = "open",
-        max_open_buffers = -1,
+        max_open_buffers = nil, -- nil (unlimited) or number
         buffer_deletion_metric = "frecency_access", -- "recency_access", "recency_edit", "frecency_access", "frecency_edit"
-        minimal_menu = nil, -- nil | "dashed" | "filename" | "full"
+
+        ui = {
+            mode = "floating", -- "floating" | "tabline"
+            floating = {
+                position = "middle-right",
+                offset_x = 0,
+                offset_y = 0,
+                dash_char = "─",
+                label_padding = 1,
+                minimal_menu = nil, -- nil | "dashed" | "filename" | "full"
+                max_rendered_buffers = nil, -- nil (no limit) or number
+            },
+            tabline = {
+                left_page_symbol = "❮",
+                right_page_symbol = "❯",
+                separator_symbol = "│",
+            },
+        },
 
         highlights = {
             current = "Bold",
@@ -550,6 +590,8 @@ function M.setup(config)
             label_lock = "DiagnosticVirtualTextWarn",
             label_minimal = "Visual",
             window_bg = "BentoNormal",
+            page_indicator = "Comment",
+            separator = "Comment",
         },
     }
 
@@ -567,7 +609,7 @@ function M.setup(config)
         BentoConfig.actions = utils.merge_tables(M.actions, config.actions)
     end
 
-    local reserved = { "<Esc>", BentoConfig.main_keymap }
+    local reserved = { "<Esc>", BentoConfig.main_keymap, "[", "]" }
     for _, action_config in pairs(BentoConfig.actions) do
         if action_config.key then
             table.insert(reserved, action_config.key)
@@ -585,7 +627,9 @@ function M.setup(config)
 
     vim.defer_fn(function()
         require("bento.ui").setup_state()
-        if BentoConfig.minimal_menu then
+        if BentoConfig.ui.mode == "tabline" then
+            require("bento.ui").toggle_menu()
+        elseif BentoConfig.ui.floating.minimal_menu then
             require("bento.ui").toggle_menu()
         end
     end, 100)

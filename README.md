@@ -10,9 +10,11 @@ A minimalist, efficient, and extensible buffer manager for Neovim.
 
 ## Features
 
+- **Two UI modes**: Floating window (default) or tabline integration
 - **Transparent sidebar** with multiple collapsed states (dashes, filenames, full, or hidden) and expanded (labels + names) states
 - **Smart label assignment** based on filenames for quick buffer switching
 - **Last accessed buffer** quick switch (press `;` twice)
+- **Pagination** for large buffer lists (automatic when exceeding screen space, or configurable via `max_rendered_buffers`)
 - **Extensible action system** with visual feedback (open, delete, custom actions)
 - **Visual indicators** for current, active, and inactive buffers
 - **Buffer limit enforcement** with configurable deletion metrics (optional)
@@ -44,11 +46,16 @@ Works out of the box with defaults. The main keymap is `;`:
 - `|` → Enter vertical split mode, then select buffer
 - `_` → Enter horizontal split mode, then select buffer
 - `*` → Toggle lock on selected buffer (protected from auto-deletion)
+- `[` / `]` → Previous / next page (floating: when `max_rendered_buffers` is set; tabline: when buffers exceed screen width)
 - `ESC` → Collapse back to dashes
 
 ## Visual States
 
-**Collapsed/Minimal:** Configurable via `minimal_menu` option:
+Bento supports two UI modes: **floating window** (default) and **tabline**. Set via `ui.mode = "floating"` or `ui.mode = "tabline"`.
+
+### Floating Window UI
+
+**Collapsed/Minimal:** Configurable via `ui.floating.minimal_menu` option:
 - `nil` (default): No collapsed menu shown
 - `"dashed"`: Shows dashes only
   - `──` = Active buffer (visible)
@@ -61,6 +68,23 @@ Works out of the box with defaults. The main keymap is `;`:
 - Normal = Active in other windows
 - *Dimmed* = Inactive
 - `;` label = Last accessed buffer
+
+### Tabline UI
+
+When `ui.mode = "tabline"`, bento renders buffers horizontally in the tabline instead of a floating window.
+
+**Minimal state:** Labels are shown with `label_minimal` highlight, keymaps are not active
+**Expanded state:** Labels use action-specific highlights, keymaps are active
+
+Each buffer displays: `[label] [lock] filename` with consistent background using `window_bg`.
+
+**Pagination:** When there are more buffers than can fit on screen, pagination indicators appear:
+- `❮` on the left edge indicates previous buffers exist
+- `❯` on the right edge indicates more buffers ahead
+- Use `[` and `]` keys to navigate between pages (only when expanded)
+- Each page shows a completely different set of buffers
+
+The `ui.floating.minimal_menu` option is ignored when using tabline UI.
 
 ## Actions
 
@@ -96,16 +120,28 @@ All options with defaults:
 ```lua
 require("bento").setup({
     main_keymap = ";", -- Main toggle/expand key
-    position = "middle-right", -- Menu position (see below)
-    offset_x = 0, -- Horizontal offset from position
-    offset_y = 0, -- Vertical offset from position
-    dash_char = "─", -- Character for collapsed dashes
     lock_char = "🔒", -- Character shown before locked buffer names
-    label_padding = 1, -- Padding around labels
-    max_open_buffers = -1, -- Max buffers (-1 = unlimited)
+    max_open_buffers = nil, -- Max buffers (nil = unlimited)
     buffer_deletion_metric = "frecency_access", -- Metric for buffer deletion (see below)
     default_action = "open", -- Action when pressing label directly
-    minimal_menu = nil, -- Collapsed menu style: nil, "dashed", "filename", or "full"
+
+    ui = {
+        mode = "floating", -- "floating" | "tabline"
+        floating = {
+            position = "middle-right", -- See position options below
+            offset_x = 0, -- Horizontal offset from position
+            offset_y = 0, -- Vertical offset from position
+            dash_char = "─", -- Character for collapsed dashes
+            label_padding = 1, -- Padding around labels
+            minimal_menu = nil, -- nil | "dashed" | "filename" | "full"
+            max_rendered_buffers = nil, -- nil (no limit) or number for pagination
+        },
+        tabline = {
+            left_page_symbol = "❮", -- Symbol shown when previous buffers exist
+            right_page_symbol = "❯", -- Symbol shown when more buffers exist
+            separator_symbol = "│", -- Separator between buffer components
+        },
+    },
 
     -- Highlight groups
     highlights = {
@@ -122,6 +158,8 @@ require("bento").setup({
         label_lock = "DiagnosticVirtualTextWarn", -- Labels in lock action mode
         label_minimal = "Visual", -- Labels in collapsed "full" mode
         window_bg = "BentoNormal", -- Menu window background
+        page_indicator = "Comment", -- Pagination indicators (● ○ ○ for floating, ❮/❯ for tabline)
+        separator = "Normal", -- Separator between buffer components in tabline
     },
 
     -- Custom actions
@@ -131,21 +169,43 @@ require("bento").setup({
 
 ### Options
 
+#### General Options
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `main_keymap` | string | `";"` | Primary key for menu toggle and expand |
+| `lock_char` | string | `"🔒"` | Character displayed before locked buffer names |
+| `max_open_buffers` | number/nil | `nil` | Maximum number of buffers to keep open (`nil` = unlimited) |
+| `buffer_deletion_metric` | string | `"frecency_access"` | Metric used to decide which buffer to delete when limit is reached (see below) |
+| `default_action` | string | `"open"` | Default action mode when menu expands |
+| `highlights` | table | See below | Highlight groups for all UI elements |
+| `actions` | table | Built-in actions | Action definitions (see Actions section) |
+
+#### UI Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `ui.mode` | string | `"floating"` | UI mode: `"floating"` (sidebar window) or `"tabline"` (horizontal tabline) |
+
+#### Floating UI Options (`ui.floating`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
 | `position` | string | `"middle-right"` | Menu position: `"top-left"`, `"top-right"`, `"middle-left"`, `"middle-right"`, `"bottom-left"`, `"bottom-right"` |
 | `offset_x` | number | `0` | Horizontal offset from position |
 | `offset_y` | number | `0` | Vertical offset from position |
 | `dash_char` | string | `"─"` | Character for collapsed state lines |
-| `lock_char` | string | `"🔒"` | Character displayed before locked buffer names |
 | `label_padding` | number | `1` | Padding on left/right of labels |
-| `max_open_buffers` | number | `-1` | Maximum number of buffers to keep open (`-1` = unlimited) |
-| `buffer_deletion_metric` | string | `"frecency_access"` | Metric used to decide which buffer to delete when limit is reached (see below) |
-| `default_action` | string | `"open"` | Default action mode when menu expands |
 | `minimal_menu` | string/nil | `nil` | Collapsed menu style: `nil` (hidden), `"dashed"` (dash lines), `"filename"` (names only), `"full"` (names + labels) |
-| `highlights` | table | See below | Highlight groups for all UI elements |
-| `actions` | table | Built-in actions | Action definitions (see Actions section) |
+| `max_rendered_buffers` | number/nil | `nil` | Maximum buffers to display per page. Pagination is also automatically enabled when buffers exceed available screen height. Uses `min(max_rendered_buffers, available_height)` when set. Navigate pages with `[` and `]` keys. A centered indicator (`● ○ ○`) shows current page. |
+
+#### Tabline UI Options (`ui.tabline`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `left_page_symbol` | string | `"❮"` | Symbol shown at left edge when previous buffers exist (pagination) |
+| `right_page_symbol` | string | `"❯"` | Symbol shown at right edge when more buffers exist (pagination) |
+| `separator_symbol` | string | `"|"` | Separator character between buffer components |
 
 ### Buffer Deletion Metrics
 
@@ -179,6 +239,8 @@ All highlights are configurable under the `highlights` table:
 | `label_lock` | `"DiagnosticVirtualTextWarn"` | Labels in lock action mode |
 | `label_minimal` | `"Visual"` | Labels in collapsed "full" mode |
 | `window_bg` | `"BentoNormal"` | Menu window background (transparent by default) |
+| `page_indicator` | `"Comment"` | Pagination indicator: `● ○ ○` in floating UI, `❮`/`❯` symbols in tabline UI |
+| `separator` | `"Normal"` | Separator character between buffer components in tabline UI |
 
 
 ## Lua API
@@ -190,6 +252,12 @@ require("bento.ui").expand_menu()
 require("bento.ui").collapse_menu()
 require("bento.ui").close_menu()
 require("bento.ui").refresh_menu()
+
+-- Pagination
+-- Floating UI: requires max_rendered_buffers to be set
+-- Tabline UI: automatic when buffers exceed screen width
+require("bento.ui").next_page()
+require("bento.ui").prev_page()
 
 -- Actions
 require("bento.ui").set_action_mode("delete")
@@ -207,6 +275,18 @@ require("bento").is_locked(bufnr)   -- Check if specific buffer is locked
 ```
 
 ## Examples
+
+### Tabline UI
+
+```lua
+require("bento").setup({
+    ui = {
+        mode = "tabline", -- Use tabline instead of floating window
+    },
+    -- Tabline is always visible, showing buffers horizontally
+    -- Press main_keymap to expand and activate keymaps
+})
+```
 
 ### Custom Highlighting
 
@@ -259,14 +339,6 @@ actions = {
         key = "y",
         action = function(_, buf_name)
             vim.fn.setreg("+", buf_name)
-        end,
-    },
-
-    -- Open in split
-    split = {
-        key = "s",
-        action = function(buf_id)
-            vim.cmd("split | buffer " .. buf_id)
         end,
     },
 }
