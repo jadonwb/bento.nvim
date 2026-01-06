@@ -632,7 +632,17 @@ function M.enforce_buffer_limit()
             break
         end
 
-        pcall(vim.api.nvim_buf_delete, lru_buf, { force = false })
+        local buf_name = vim.api.nvim_buf_get_name(lru_buf)
+        local display_name = buf_name ~= "" and utils.get_file_name(buf_name)
+            or "[No Name]"
+        local ok = pcall(vim.api.nvim_buf_delete, lru_buf, { force = false })
+        if ok then
+            vim.notify(
+                "Deleted buffer " .. display_name,
+                vim.log.levels.INFO,
+                { title = "Buffer Manager" }
+            )
+        end
         valid_buffers = valid_buffers - 1
     end
 end
