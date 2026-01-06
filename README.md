@@ -8,6 +8,10 @@
 
 A minimalist, efficient, and extensible buffer manager for Neovim.
 
+
+https://github.com/user-attachments/assets/e0429af6-575e-48ea-bb9b-207526c7df13
+
+
 ## Features
 
 - **Two UI modes**: Floating window (default) or tabline integration
