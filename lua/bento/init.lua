@@ -88,11 +88,13 @@ end
 local function save_buffer_metrics()
     local metrics_by_path = {}
     for buf_id, metrics in pairs(M.buffer_metrics) do
-        if vim.api.nvim_buf_is_valid(buf_id) then
+        if vim.api.nvim_buf_is_valid(buf_id) and metrics then
             local path = vim.api.nvim_buf_get_name(buf_id)
             if path and path ~= "" then
-                local last_access = metrics.access_times[#metrics.access_times]
-                local last_edit = metrics.edit_times[#metrics.edit_times]
+                local access_times = metrics.access_times
+                local edit_times = metrics.edit_times
+                local last_access = access_times and access_times[#access_times]
+                local last_edit = edit_times and edit_times[#edit_times]
                 if last_access or last_edit then
                     metrics_by_path[path] = {
                         a = last_access,
@@ -411,10 +413,13 @@ local function setup_autocmds()
             if not locked_paths then
                 return
             end
-            local buf_path = vim.api.nvim_buf_get_name(args.buf)
+            local ok, buf_path = pcall(vim.api.nvim_buf_get_name, args.buf)
+            if not ok then
+                return
+            end
             if buf_path and buf_path ~= "" then
                 for _, path in ipairs(locked_paths) do
-                    if path == buf_path then
+                    if type(path) == "string" and path == buf_path then
                         require("bento").locked_buffers[args.buf] = true
                         break
                     end
@@ -431,13 +436,22 @@ local function setup_autocmds()
             if not saved_metrics then
                 return
             end
-            local buf_path = vim.api.nvim_buf_get_name(args.buf)
+            local ok, buf_path = pcall(vim.api.nvim_buf_get_name, args.buf)
+            if not ok then
+                return
+            end
             if buf_path and buf_path ~= "" and saved_metrics[buf_path] then
                 local metrics = saved_metrics[buf_path]
-                require("bento").buffer_metrics[args.buf] = {
-                    access_times = metrics.a and { metrics.a } or {},
-                    edit_times = metrics.e and { metrics.e } or {},
-                }
+                if type(metrics) == "table" then
+                    require("bento").buffer_metrics[args.buf] = {
+                        access_times = (type(metrics.a) == "number")
+                                and { metrics.a }
+                            or {},
+                        edit_times = (type(metrics.e) == "number")
+                                and { metrics.e }
+                            or {},
+                    }
+                end
             end
         end,
         desc = "Restore buffer metrics from session",
@@ -554,17 +568,17 @@ local function get_buffer_metric_value(buf_id, metric_type)
         end
         return 0
     elseif metric_type == "recency_edit" then
-        if metrics and #metrics.edit_times > 0 then
+        if metrics and metrics.edit_times and #metrics.edit_times > 0 then
             return metrics.edit_times[#metrics.edit_times]
         end
         return 0
     elseif metric_type == "frecency_access" then
-        if metrics then
+        if metrics and metrics.access_times then
             return calculate_frecency(metrics.access_times)
         end
         return 0
     elseif metric_type == "frecency_edit" then
-        if metrics then
+        if metrics and metrics.edit_times then
             return calculate_frecency(metrics.edit_times)
         end
         return 0
@@ -592,7 +606,7 @@ function M.get_ordering_value(buf_id)
     local metrics = M.buffer_metrics[buf_id]
 
     if ordering_metric == "access" then
-        if metrics and #metrics.access_times > 0 then
+        if metrics and metrics.access_times and #metrics.access_times > 0 then
             return metrics.access_times[#metrics.access_times]
         end
         local buf_info = vim.fn.getbufinfo(buf_id)[1]
@@ -601,7 +615,7 @@ function M.get_ordering_value(buf_id)
         end
         return 0
     elseif ordering_metric == "edit" then
-        if metrics and #metrics.edit_times > 0 then
+        if metrics and metrics.edit_times and #metrics.edit_times > 0 then
             return metrics.edit_times[#metrics.edit_times]
         end
         return 0
