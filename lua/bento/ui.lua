@@ -200,14 +200,50 @@ local function update_marks()
     end
 
     config = bento.get_config()
-    if config.ordering_metric then
+    local ordering_metric = config.ordering_metric
+    local locked_first = config.locked_first
+
+    if ordering_metric then
         table.sort(marks, function(a, b)
+            -- Sort locked buffers first if enabled
+            if locked_first then
+                local a_locked = bento.is_locked(a.buf_id)
+                local b_locked = bento.is_locked(b.buf_id)
+                if a_locked and not b_locked then
+                    return true
+                elseif b_locked and not a_locked then
+                    return false
+                end
+            end
+
             local a_val = bento.get_ordering_value(a.buf_id)
             local b_val = bento.get_ordering_value(b.buf_id)
-            if a_val == b_val then
-                return a.buf_id < b.buf_id
+
+            if ordering_metric == "filename" or ordering_metric == "directory" then
+                -- String comparison: ascending alphabetical
+                if a_val == b_val then
+                    return a.buf_id < b.buf_id
+                end
+                return a_val < b_val
+            else
+                -- Numeric comparison: descending (most recent first)
+                if a_val == b_val then
+                    return a.buf_id < b.buf_id
+                end
+                return a_val > b_val
             end
-            return a_val > b_val
+        end)
+    elseif locked_first then
+        -- Only sort by locked status if no ordering metric
+        table.sort(marks, function(a, b)
+            local a_locked = bento.is_locked(a.buf_id)
+            local b_locked = bento.is_locked(b.buf_id)
+            if a_locked and not b_locked then
+                return true
+            elseif b_locked and not a_locked then
+                return false
+            end
+            return a.buf_id < b.buf_id
         end)
     end
 end
